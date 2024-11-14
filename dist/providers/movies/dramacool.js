@@ -7,7 +7,7 @@ class DramaCool extends models_1.MovieParser {
     constructor() {
         super(...arguments);
         this.name = 'DramaCool';
-        this.baseUrl = 'https://dramacool.com.pa';
+        this.baseUrl = 'https://asianc.co';
         this.logo = 'https://play-lh.googleusercontent.com/IaCb2JXII0OV611MQ-wSA8v_SAs9XF6E3TMDiuxGGXo4wp9bI60GtDASIqdERSTO5XU';
         this.classPath = 'MOVIES.DramaCool';
         this.supportedTypes = new Set([models_1.TvType.MOVIE, models_1.TvType.TVSERIES]);
@@ -15,33 +15,31 @@ class DramaCool extends models_1.MovieParser {
             try {
                 const searchResult = {
                     currentPage: page,
-                    totalPages: page,
                     hasNextPage: false,
+                    totalPages: page,
                     results: [],
                 };
                 const { data } = await this.client.get(`${this.baseUrl}/search?keyword=${query.replace(/[\W_]+/g, '-')}&page=${page}`);
                 const $ = (0, cheerio_1.load)(data);
                 const navSelector = 'ul.pagination';
-                searchResult.hasNextPage =
-                    $(navSelector).length > 0 ? !$(navSelector).children().last().hasClass('selected') : false;
-                const lastPage = $(navSelector).children().last().find('a').attr('href');
-                if (lastPage != undefined && lastPage != '' && lastPage.includes('page=')) {
-                    const maxPage = new URLSearchParams(lastPage).get('page');
-                    if (maxPage != null && !isNaN(parseInt(maxPage)))
-                        searchResult.totalPages = parseInt(maxPage);
-                    else if (searchResult.hasNextPage)
-                        searchResult.totalPages = page + 1;
+                const lastPage = $(navSelector).find('li.last a').attr('href');
+                if (lastPage) {
+                    const maxPage = parseInt(lastPage.split('page=')[1]);
+                    searchResult.totalPages = maxPage || 1;
+                    searchResult.hasNextPage = page < maxPage;
                 }
-                else if (searchResult.hasNextPage)
-                    searchResult.totalPages = page + 1;
-                $('div.block > div.tab-content > ul.list-episode-item > li').each((i, el) => {
-                    var _a;
-                    searchResult.results.push({
-                        id: (_a = $(el).find('a').attr('href')) === null || _a === void 0 ? void 0 : _a.slice(1),
-                        title: $(el).find('a > h3').text(),
-                        url: `${this.baseUrl}${$(el).find('a').attr('href')}`,
-                        image: $(el).find('a > img').attr('data-original'),
-                    });
+                $('div.block > div.tab-content > ul.list-episode-item > li').each((_, el) => {
+                    const link = $(el).find('a').attr('href');
+                    const title = $(el).find('h3.title').text().trim();
+                    const image = $(el).find('img').attr('data-original');
+                    if (link && title) {
+                        searchResult.results.push({
+                            id: link.slice(1).replace('.html', ''),
+                            title: title,
+                            url: `${this.baseUrl}${link}`,
+                            image: image,
+                        });
+                    }
                 });
                 return searchResult;
             }
@@ -49,22 +47,36 @@ class DramaCool extends models_1.MovieParser {
                 throw new Error(err.message);
             }
         };
-        this.fetchMediaInfo = async (mediaId) => {
-            var _a;
+        this.fetchMediaInfo = async (mediaId, type) => {
+            var _a, _b;
             try {
                 const realMediaId = mediaId;
-                if (!mediaId.startsWith(this.baseUrl))
-                    mediaId = `${this.baseUrl}/${mediaId}`;
-                const mediaInfo = {
-                    id: '',
-                    title: '',
-                };
-                const { data } = await this.client.get(mediaId);
+                const mediaUrl = mediaId.startsWith(this.baseUrl) ? mediaId : `${this.baseUrl}/${mediaId}`;
+                const { data } = await this.client.get(mediaUrl);
                 const $ = (0, cheerio_1.load)(data);
-                mediaInfo.id = realMediaId;
+                // Initialize arrays first
+                const genres = [];
+                const episodes = [];
+                const characters = [];
+                // Parse genres first
+                $('div.details div.info p:contains("Genre:") a').each((_, el) => {
+                    genres.push($(el).text().trim());
+                });
+                const mediaInfo = {
+                    id: realMediaId,
+                    title: $('.info > h1:nth-child(1)').text(),
+                    otherNames: $('.other_name > a')
+                        .map((_, el) => $(el).text().trim())
+                        .get(),
+                    genres: genres,
+                    type: models_1.TvType.TVSERIES,
+                    episodes: episodes,
+                    characters: characters,
+                };
                 const duration = $('div.details div.info p:contains("Duration:")').first().text().trim();
-                if (duration != '')
+                if (duration) {
                     mediaInfo.duration = duration.replace('Duration:', '').trim();
+                }
                 const status = $('div.details div.info p:contains("Status:")').find('a').first().text().trim();
                 switch (status) {
                     case 'Ongoing':
@@ -75,25 +87,10 @@ class DramaCool extends models_1.MovieParser {
                         break;
                     default:
                         mediaInfo.status = models_1.MediaStatus.UNKNOWN;
-                        break;
                 }
-                mediaInfo.genres = [];
-                const genres = $('div.details div.info p:contains("Genre:")');
-                genres.each((_index, element) => {
-                    $(element)
-                        .find('a')
-                        .each((_, anchorElement) => {
-                        var _a;
-                        (_a = mediaInfo.genres) === null || _a === void 0 ? void 0 : _a.push($(anchorElement).text());
-                    });
-                });
-                mediaInfo.title = $('.info > h1:nth-child(1)').text();
-                mediaInfo.otherNames = $('.other_name > a')
-                    .map((i, el) => $(el).text().trim())
-                    .get();
                 mediaInfo.image = $('div.details > div.img > img').attr('src');
                 mediaInfo.description = $('div.details div.info p:not(:has(*))')
-                    .map((i, el) => $(el).text().trim())
+                    .map((_, el) => $(el).text().trim())
                     .get()
                     .join('\n\n')
                     .trim();
@@ -101,37 +98,77 @@ class DramaCool extends models_1.MovieParser {
                 mediaInfo.contentRating = this.removeContainsFromString($('div.details div.info p:contains("Content Rating:")').text(), 'Content Rating');
                 mediaInfo.airsOn = this.removeContainsFromString($('div.details div.info p:contains("Airs On:")').text(), 'Airs On');
                 mediaInfo.director = this.removeContainsFromString($('div.details div.info p:contains("Director:")').text(), 'Director');
-                mediaInfo.originalNetwork = this.cleanUpText(this.removeContainsFromString($('div.details div.info p:contains("Original Network:")').text().trim(), 'Original Network'));
-                const trailerIframe = $('div.trailer').find('iframe').attr('src');
-                mediaInfo.trailer = {
-                    id: (_a = trailerIframe === null || trailerIframe === void 0 ? void 0 : trailerIframe.split('embed/')[1]) === null || _a === void 0 ? void 0 : _a.split('?')[0],
-                    url: trailerIframe,
-                };
-                mediaInfo.characters = [];
-                $('div.slider-star > div.item').each((i, el) => {
-                    const url = `${this.baseUrl}${$(el).find('a.img').attr('href')}`;
-                    const image = $(el).find('img').attr('src');
-                    const name = $(el).find('h3.title').text().trim();
-                    mediaInfo.characters.push({
-                        url,
-                        image,
-                        name,
-                    });
+                mediaInfo.originalNetwork = this.cleanupText(this.removeContainsFromString($('div.details div.info p:contains("Original Network:")').text().trim(), 'Original Network'));
+                const trailerIframe = $('div.trailer iframe').attr('src');
+                if (trailerIframe) {
+                    mediaInfo.trailer = {
+                        id: (_b = (_a = trailerIframe.split('embed/')[1]) === null || _a === void 0 ? void 0 : _a.split('?')[0]) !== null && _b !== void 0 ? _b : '',
+                        url: trailerIframe,
+                    };
+                }
+                // Parse characters/cast
+                $('div.slider-star > div.item').each((_, el) => {
+                    const charUrl = $(el).find('a.img').attr('href');
+                    const charImage = $(el).find('img').attr('src');
+                    const charName = $(el).find('h3.title').text().trim();
+                    if (charUrl && charName) {
+                        characters.push({
+                            name: charName,
+                            image: charImage || undefined,
+                            url: `${this.baseUrl}${charUrl}`,
+                        });
+                    }
                 });
-                mediaInfo.episodes = [];
-                $('div.content-left > div.block-tab > div > div > ul > li').each((i, el) => {
-                    var _a, _b, _c;
-                    (_a = mediaInfo.episodes) === null || _a === void 0 ? void 0 : _a.push({
-                        id: (_b = $(el).find('a').attr('href')) === null || _b === void 0 ? void 0 : _b.split('.html')[0].slice(1),
-                        title: $(el).find('h3').text().replace(mediaInfo.title.toString(), '').trim(),
-                        episode: parseFloat((_c = $(el).find('a').attr('href')) === null || _c === void 0 ? void 0 : _c.split('-episode-')[1].split('.html')[0].split('-').join('.')),
-                        subType: $(el).find('span.type').text(),
-                        releaseDate: $(el).find('span.time').text(),
-                        url: `${this.baseUrl}${$(el).find('a').attr('href')}`,
-                    });
+                // Parse episodes
+                $('div.content-left > div.block-tab > div > div > ul > li').each((_, el) => {
+                    var _a;
+                    const episodeUrl = $(el).find('a').attr('href');
+                    const episodeTitle = $(el).find('h3').text().replace(mediaInfo.title.toString(), '').trim();
+                    if (episodeUrl) {
+                        const episodeId = episodeUrl.split('.html')[0].slice(1);
+                        const episodeNumber = (_a = episodeUrl.split('-episode-')[1]) === null || _a === void 0 ? void 0 : _a.split('.html')[0];
+                        if (episodeId && episodeNumber) {
+                            const episode = {
+                                id: episodeId,
+                                title: episodeTitle,
+                                episode: parseFloat(episodeNumber.split('-').join('.')),
+                                url: `${this.baseUrl}${episodeUrl}`,
+                                subType: $(el).find('span.type').text() || undefined,
+                                releaseDate: $(el).find('span.time').text() || undefined,
+                            };
+                            episodes.push(episode);
+                        }
+                    }
                 });
-                mediaInfo.episodes.reverse();
+                episodes.reverse();
                 return mediaInfo;
+            }
+            catch (err) {
+                throw new Error(err.message);
+            }
+        };
+        this.fetchEpisodeServers = async (episodeId) => {
+            try {
+                const episodeServers = [];
+                const episodeUrl = episodeId.includes('.html') ? episodeId : `${this.baseUrl}/${episodeId}.html`;
+                const { data } = await this.client.get(episodeUrl);
+                const $ = (0, cheerio_1.load)(data);
+                $('div.anime_muti_link > ul > li').each((_, el) => {
+                    var _a, _b;
+                    const url = $(el).attr('data-video');
+                    let name = (_b = (_a = $(el).attr('class')) === null || _a === void 0 ? void 0 : _a.replace('selected', '').trim()) !== null && _b !== void 0 ? _b : '';
+                    if (url) {
+                        if (name.includes('Standard')) {
+                            name = models_1.StreamingServers.AsianLoad;
+                        }
+                        const serverUrl = url.startsWith('//') ? `https:${url}` : url;
+                        episodeServers.push({
+                            name: name,
+                            url: serverUrl,
+                        });
+                    }
+                });
+                return episodeServers;
             }
             catch (err) {
                 throw new Error(err.message);
@@ -163,14 +200,12 @@ class DramaCool extends models_1.MovieParser {
                 }
             }
             try {
-                if (!episodeId.includes('.html'))
-                    episodeId = `${this.baseUrl}/${episodeId}.html`;
                 const servers = await this.fetchEpisodeServers(episodeId);
-                const i = servers.findIndex(s => s.name.toLowerCase() === server.toLowerCase());
-                if (i === -1) {
+                const serverIndex = servers.findIndex(s => s.name.toLowerCase() === server.toLowerCase());
+                if (serverIndex === -1) {
                     throw new Error(`Server ${server} not found`);
                 }
-                const serverUrl = new URL(servers.filter(s => s.name.toLowerCase() === server.toLowerCase())[0].url);
+                const serverUrl = new URL(servers.find(s => s.name.toLowerCase() === server.toLowerCase()).url);
                 return await this.fetchEpisodeSources(serverUrl.href, server);
             }
             catch (err) {
@@ -178,13 +213,84 @@ class DramaCool extends models_1.MovieParser {
             }
         };
         this.fetchPopular = async (page = 1) => {
-            return this.fetchData(`${this.baseUrl}/most-popular-drama?page=${page}`, page);
+            try {
+                const { data } = await this.client.get(`${this.baseUrl}/most-popular-drama?page=${page}`);
+                return this.parseViewPage(data, page);
+            }
+            catch (err) {
+                throw new Error(err.message);
+            }
         };
         this.fetchRecentTvShows = async (page = 1) => {
-            return this.fetchData(`${this.baseUrl}/recently-added?page=${page}`, page, true);
+            try {
+                const { data } = await this.client.get(`${this.baseUrl}/recently-added?page=${page}`);
+                return this.parseViewPage(data, page, true);
+            }
+            catch (err) {
+                throw new Error(err.message);
+            }
         };
         this.fetchRecentMovies = async (page = 1) => {
-            return this.fetchData(`${this.baseUrl}/recently-added-movie?page=${page}`, page, false, true);
+            try {
+                const { data } = await this.client.get(`${this.baseUrl}/recently-added-movie?page=${page}`);
+                return this.parseViewPage(data, page, false, true);
+            }
+            catch (err) {
+                throw new Error(err.message);
+            }
+        };
+        this.parseViewPage = (data, page, isTvShow = false, isMovie = false) => {
+            const $ = (0, cheerio_1.load)(data);
+            const results = {
+                currentPage: page,
+                hasNextPage: false,
+                totalPages: 1,
+                results: [],
+            };
+            const navSelector = 'ul.pagination';
+            const lastPage = $(navSelector).find('li.last a').attr('href');
+            if (lastPage) {
+                const maxPage = parseInt(lastPage.split('page=')[1]);
+                results.totalPages = maxPage || 1;
+                results.hasNextPage = page < maxPage;
+            }
+            $('ul.list-episode-item > li').each((_, el) => {
+                const link = $(el).find('a').attr('href');
+                const title = $(el).find('h3.title').text().trim();
+                const image = $(el).find('img').attr('data-original');
+                const time = $(el).find('span.time').text();
+                if (link && title) {
+                    let id;
+                    let episodeNumber;
+                    if (isTvShow) {
+                        id = link.split('-episode-')[0].slice(1);
+                        const epMatch = $(el)
+                            .find('span.ep')
+                            .text()
+                            .match(/EP (\d+)/);
+                        episodeNumber = epMatch ? parseInt(epMatch[1]) : undefined;
+                    }
+                    else if (isMovie) {
+                        id = link.slice(1).replace('.html', '');
+                    }
+                    else {
+                        id = link.slice(1).replace('.html', '');
+                    }
+                    const result = {
+                        id: id,
+                        title: title,
+                        url: `${this.baseUrl}${link}`,
+                        image: image,
+                        releaseDate: time,
+                        type: isMovie ? models_1.TvType.MOVIE : models_1.TvType.TVSERIES,
+                    };
+                    if (episodeNumber !== undefined) {
+                        result.episodeNumber = episodeNumber;
+                    }
+                    results.results.push(result);
+                }
+            });
+            return results;
         };
         this.downloadLink = (url) => {
             return url.replace(/^(https:\/\/[^\/]+)\/[^?]+(\?.+)$/, '$1/download$2');
@@ -193,7 +299,7 @@ class DramaCool extends models_1.MovieParser {
             contains = contains.toLowerCase();
             return str.toLowerCase().replace(/\n/g, '').replace(`${contains}:`, '').trim();
         };
-        this.cleanUpText = (str) => {
+        this.cleanupText = (str) => {
             return str
                 .split(';')
                 .map(part => part.trim())
@@ -201,84 +307,6 @@ class DramaCool extends models_1.MovieParser {
                 .join('; ');
         };
     }
-    async fetchEpisodeServers(episodeId, ...args) {
-        try {
-            const episodeServers = [];
-            if (!episodeId.includes('.html'))
-                episodeId = `${this.baseUrl}/${episodeId}.html`;
-            const { data } = await this.client.get(episodeId);
-            const $ = (0, cheerio_1.load)(data);
-            $('div.anime_muti_link > ul > li').map(async (i, ele) => {
-                const url = $(ele).attr('data-video');
-                let name = $(ele).attr('class').replace('selected', '').trim();
-                if (name.includes('Standard')) {
-                    name = models_1.StreamingServers.AsianLoad;
-                }
-                episodeServers.push({
-                    name: name,
-                    url: url.startsWith('//') ? url === null || url === void 0 ? void 0 : url.replace('//', 'https://') : url,
-                });
-            });
-            return episodeServers;
-        }
-        catch (err) {
-            throw new Error(err.message);
-        }
-    }
-    async fetchData(url, page, isTvShow = false, isMovies = false) {
-        try {
-            const { data } = await this.client.get(url);
-            const $ = (0, cheerio_1.load)(data);
-            const results = {
-                currentPage: page,
-                totalPages: page,
-                hasNextPage: false,
-                results: [],
-            };
-            $('ul.switch-block.list-episode-item')
-                .find('li')
-                .each((i, el) => {
-                var _a;
-                const result = {
-                    id: (_a = $(el).find('a').attr('href')) === null || _a === void 0 ? void 0 : _a.slice(1),
-                    title: $(el).find('h3.title').text().trim(),
-                    url: `${this.baseUrl}${$(el).find('a').attr('href')}`,
-                    image: $(el).find('img').attr('data-original'),
-                };
-                if (isTvShow || isMovies) {
-                    result.id = result.image
-                        ? result.image.replace(/^https:\/\/[^\/]+\/[^\/]+\/(.+?)-\d+\.\w+$/, 'drama-detail/$1')
-                        : '';
-                }
-                if (isTvShow) {
-                    result.episodeNumber = parseFloat($(el).find('span.ep').text().trim().split(' ')[1]);
-                }
-                results.results.push(result);
-            });
-            const navSelector = 'ul.pagination';
-            results.hasNextPage =
-                $(navSelector).length > 0 ? !$(navSelector).children().last().hasClass('selected') : false;
-            const lastPage = $(navSelector).children().last().find('a').attr('href');
-            if (lastPage != undefined && lastPage != '' && lastPage.includes('page=')) {
-                const maxPage = new URLSearchParams(lastPage).get('page');
-                if (maxPage != null && !isNaN(parseInt(maxPage)))
-                    results.totalPages = parseInt(maxPage);
-                else if (results.hasNextPage)
-                    results.totalPages = page + 1;
-            }
-            else if (results.hasNextPage)
-                results.totalPages = page + 1;
-            return results;
-        }
-        catch (err) {
-            throw new Error(err.message);
-        }
-    }
 }
-//testing fetchPopular via iife
-// (async () => {
-//   const dramaCool = new DramaCool();
-//   await dramaCool.fetchRecentTvShows();
-// })();
 exports.default = DramaCool;
 //# sourceMappingURL=dramacool.js.map

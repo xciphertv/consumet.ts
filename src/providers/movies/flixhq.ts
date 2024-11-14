@@ -146,7 +146,7 @@ class FlixHQ extends MovieParser {
                 title: $$$(el).find('a').attr('title')!,
                 number: parseInt($$$(el).find('a').attr('title')!.split(':')[0].slice(3).trim()),
                 season: season,
-                url: `${this.baseUrl}/ajax/v2/episode/servers/${$$$(el).find('a').attr('id')!.split('-')[1]}`,
+                url: `${this.baseUrl}//ajax/episode/sources/${$$$(el).find('a').attr('id')!.split('-')[1]}`,
               };
               movieInfo.episodes?.push(episode);
             })
@@ -158,7 +158,7 @@ class FlixHQ extends MovieParser {
           {
             id: uid,
             title: movieInfo.title,
-            url: `${this.baseUrl}/ajax/movie/episodes/${uid}`,
+            url: `${this.baseUrl}/ajax/episode/sources/${uid}`,
           },
         ];
       }
@@ -216,7 +216,7 @@ class FlixHQ extends MovieParser {
       }
 
       const { data } = await this.client.get(
-        `${this.baseUrl}/ajax/get_link/${servers[i].url.split('.').slice(-1).shift()}`
+        `${this.baseUrl}/ajax/episode/sources/${servers[i].url.split('.').slice(-1).shift()}`
       );
 
       const serverUrl: URL = new URL(data.link);
@@ -230,12 +230,13 @@ class FlixHQ extends MovieParser {
 
   /**
    *
-   * @param episodeId takes episode link or movie id
-   * @param mediaId takes movie link or id (found on movie info object)
+   * @param episodeId episode id
+   * @param mediaId media id
+   * @param server server type (default `VidCloud`) (optional)
    */
   override fetchEpisodeServers = async (episodeId: string, mediaId: string): Promise<IEpisodeServer[]> => {
     if (!episodeId.startsWith(this.baseUrl + '/ajax') && !mediaId.includes('movie'))
-      episodeId = `${this.baseUrl}/ajax/v2/episode/servers/${episodeId}`;
+      episodeId = `${this.baseUrl}/ajax/episode/list/${episodeId}`;
     else episodeId = `${this.baseUrl}/ajax/movie/episodes/${episodeId}`;
 
     try {
@@ -244,15 +245,10 @@ class FlixHQ extends MovieParser {
 
       const servers = $('.nav > li')
         .map((i, el) => {
+          const link = $(el).find('a');
           const server = {
-            name: mediaId.includes('movie')
-              ? $(el).find('a').attr('title')!.toLowerCase()
-              : $(el).find('a').attr('title')!.slice(6).trim().toLowerCase(),
-            url: `${this.baseUrl}/${mediaId}.${
-              !mediaId.includes('movie')
-                ? $(el).find('a').attr('data-id')
-                : $(el).find('a').attr('data-linkid')
-            }`.replace(
+            name: link.find('span').text().toLowerCase(),
+            url: `${this.baseUrl}/${mediaId}.${link.attr('data-linkid')}`.replace(
               !mediaId.includes('movie') ? /\/tv\// : /\/movie\//,
               !mediaId.includes('movie') ? '/watch-tv/' : '/watch-movie/'
             ),
@@ -272,21 +268,20 @@ class FlixHQ extends MovieParser {
       const $ = load(data);
 
       const movies = $(
-        'section.block_area:contains("Latest Movies") > div:nth-child(2) > div:nth-child(1) > div.flw-item'
+        'section.block_area:contains("Latest Movies") > div.block_area-content > div.film_list-wrap > div.flw-item'
       )
         .map((i, el) => {
           const releaseDate = $(el).find('div.film-detail > div.fd-infor > span:nth-child(1)').text();
-          const movie: any = {
+          const duration = $(el).find('div.film-detail > div.fd-infor > span.fdi-duration').text();
+
+          const movie: IMovieResult = {
             id: $(el).find('div.film-poster > a').attr('href')?.slice(1)!,
             title: $(el).find('div.film-detail > h3.film-name > a').attr('title')!,
             url: `${this.baseUrl}${$(el).find('div.film-poster > a').attr('href')}`,
             image: $(el).find('div.film-poster > img').attr('data-src'),
             releaseDate: isNaN(parseInt(releaseDate)) ? undefined : releaseDate,
-            duration: $(el).find('div.film-detail > div.fd-infor > span.fdi-duration').text() || null,
-            type:
-              $(el).find('div.film-detail > div.fd-infor > span.float-right').text() === 'Movie'
-                ? TvType.MOVIE
-                : TvType.TVSERIES,
+            duration: duration || null,
+            type: TvType.MOVIE,
           };
           return movie;
         })
@@ -303,20 +298,20 @@ class FlixHQ extends MovieParser {
       const $ = load(data);
 
       const tvshows = $(
-        'section.block_area:contains("Latest TV Shows") > div:nth-child(2) > div:nth-child(1) > div.flw-item'
+        'section.block_area:contains("Latest TV Shows") > div.block_area-content > div.film_list-wrap > div.flw-item'
       )
         .map((i, el) => {
-          const tvshow = {
+          const seasonInfo = $(el).find('div.film-detail > div.fd-infor > span:nth-child(1)').text();
+          const episodeInfo = $(el).find('div.film-detail > div.fd-infor > span:nth-child(2)').text();
+
+          const tvshow: IMovieResult = {
             id: $(el).find('div.film-poster > a').attr('href')?.slice(1)!,
             title: $(el).find('div.film-detail > h3.film-name > a').attr('title')!,
             url: `${this.baseUrl}${$(el).find('div.film-poster > a').attr('href')}`,
             image: $(el).find('div.film-poster > img').attr('data-src'),
-            season: $(el).find('div.film-detail > div.fd-infor > span:nth-child(1)').text(),
-            latestEpisode: $(el).find('div.film-detail > div.fd-infor > span:nth-child(3)').text() || null,
-            type:
-              $(el).find('div.film-detail > div.fd-infor > span.float-right').text() === 'Movie'
-                ? TvType.MOVIE
-                : TvType.TVSERIES,
+            season: seasonInfo.includes('SS') ? seasonInfo : undefined,
+            latestEpisode: episodeInfo.includes('EPS') ? episodeInfo : null,
+            type: TvType.TVSERIES,
           };
           return tvshow;
         })

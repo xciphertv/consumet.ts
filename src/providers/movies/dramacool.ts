@@ -11,12 +11,14 @@ import {
   MovieParser,
   StreamingServers,
   TvType,
+  IMovieEpisode,
 } from '../../models';
 
 class DramaCool extends MovieParser {
   override readonly name = 'DramaCool';
-  protected override baseUrl = 'https://asianc.sh';
-  protected override logo = 'https://play-lh.googleusercontent.com/IaCb2JXII0OV611MQ-wSA8v_SAs9XF6E3TMDiuxGGXo4wp9bI60GtDASIqdERSTO5XU';
+  protected override baseUrl = 'https://asianc.co';
+  protected override logo =
+    'https://play-lh.googleusercontent.com/IaCb2JXII0OV611MQ-wSA8v_SAs9XF6E3TMDiuxGGXo4wp9bI60GtDASIqdERSTO5XU';
   protected override classPath = 'MOVIES.DramaCool';
   override supportedTypes = new Set([TvType.MOVIE, TvType.TVSERIES]);
 
@@ -35,7 +37,6 @@ class DramaCool extends MovieParser {
 
       const $ = load(data);
 
-      // Parse pagination
       const navSelector = 'ul.pagination';
       const lastPage = $(navSelector).find('li.last a').attr('href');
       if (lastPage) {
@@ -44,7 +45,6 @@ class DramaCool extends MovieParser {
         searchResult.hasNextPage = page < maxPage;
       }
 
-      // Parse search results
       $('div.block > div.tab-content > ul.list-episode-item > li').each((_, el) => {
         const link = $(el).find('a').attr('href');
         const title = $(el).find('h3.title').text().trim();
@@ -66,7 +66,7 @@ class DramaCool extends MovieParser {
     }
   };
 
-  override fetchMediaInfo = async (mediaId: string): Promise<IMovieInfo> => {
+  override fetchMediaInfo = async (mediaId: string, type?: string): Promise<IMovieInfo> => {
     try {
       const realMediaId = mediaId;
       const mediaUrl = mediaId.startsWith(this.baseUrl) ? mediaId : `${this.baseUrl}/${mediaId}`;
@@ -74,21 +74,33 @@ class DramaCool extends MovieParser {
       const { data } = await this.client.get(mediaUrl);
       const $ = load(data);
 
-      const mediaInfo: IMovieInfo = {
+      // Initialize arrays first
+      const genres: string[] = [];
+      const episodes: IMovieEpisode[] = [];
+      const characters: Array<{ name: string; role?: string; image?: string; url?: string }> = [];
+
+      // Parse genres first
+      $('div.details div.info p:contains("Genre:") a').each((_, el) => {
+        genres.push($(el).text().trim());
+      });
+
+      const mediaInfo = {
         id: realMediaId,
         title: $('.info > h1:nth-child(1)').text(),
-        otherNames: $('.other_name > a').map((_, el) => $(el).text().trim()).get(),
-        genres: [],
-        episodes: []
-      };
+        otherNames: $('.other_name > a')
+          .map((_, el) => $(el).text().trim())
+          .get(),
+        genres: genres,
+        type: TvType.TVSERIES,
+        episodes: episodes,
+        characters: characters,
+      } as IMovieInfo;
 
-      // Parse general info
       const duration = $('div.details div.info p:contains("Duration:")').first().text().trim();
       if (duration) {
         mediaInfo.duration = duration.replace('Duration:', '').trim();
       }
 
-      // Parse status
       const status = $('div.details div.info p:contains("Status:")').find('a').first().text().trim();
       switch (status) {
         case 'Ongoing':
@@ -101,12 +113,6 @@ class DramaCool extends MovieParser {
           mediaInfo.status = MediaStatus.UNKNOWN;
       }
 
-      // Parse genres
-      $('div.details div.info p:contains("Genre:") a').each((_, el) => {
-        mediaInfo.genres?.push($(el).text().trim());
-      });
-
-      // Parse additional info
       mediaInfo.image = $('div.details > div.img > img').attr('src');
       mediaInfo.description = $('div.details div.info p:not(:has(*))')
         .map((_, el) => $(el).text().trim())
@@ -114,7 +120,6 @@ class DramaCool extends MovieParser {
         .join('\n\n')
         .trim();
 
-      // Parse metadata
       mediaInfo.releaseDate = this.removeContainsFromString(
         $('div.details div.info p:contains("Released:")').text(),
         'Released'
@@ -138,27 +143,25 @@ class DramaCool extends MovieParser {
         )
       );
 
-      // Parse trailer
       const trailerIframe = $('div.trailer iframe').attr('src');
       if (trailerIframe) {
         mediaInfo.trailer = {
           id: trailerIframe.split('embed/')[1]?.split('?')[0] ?? '',
-          url: trailerIframe
+          url: trailerIframe,
         };
       }
 
       // Parse characters/cast
-      mediaInfo.characters = [];
       $('div.slider-star > div.item').each((_, el) => {
         const charUrl = $(el).find('a.img').attr('href');
         const charImage = $(el).find('img').attr('src');
         const charName = $(el).find('h3.title').text().trim();
 
         if (charUrl && charName) {
-          mediaInfo.characters?.push({
+          characters.push({
+            name: charName,
+            image: charImage || undefined,
             url: `${this.baseUrl}${charUrl}`,
-            image: charImage,
-            name: charName
           });
         }
       });
@@ -167,26 +170,27 @@ class DramaCool extends MovieParser {
       $('div.content-left > div.block-tab > div > div > ul > li').each((_, el) => {
         const episodeUrl = $(el).find('a').attr('href');
         const episodeTitle = $(el).find('h3').text().replace(mediaInfo.title.toString(), '').trim();
-        
+
         if (episodeUrl) {
           const episodeId = episodeUrl.split('.html')[0].slice(1);
           const episodeNumber = episodeUrl.split('-episode-')[1]?.split('.html')[0];
-          
+
           if (episodeId && episodeNumber) {
-            mediaInfo.episodes?.push({
+            const episode = {
               id: episodeId,
               title: episodeTitle,
               episode: parseFloat(episodeNumber.split('-').join('.')),
-              subType: $(el).find('span.type').text(),
-              releaseDate: $(el).find('span.time').text(),
-              url: `${this.baseUrl}${episodeUrl}`
-            });
+              url: `${this.baseUrl}${episodeUrl}`,
+              subType: $(el).find('span.type').text() || undefined,
+              releaseDate: $(el).find('span.time').text() || undefined,
+            } as IMovieEpisode;
+
+            episodes.push(episode);
           }
         }
       });
 
-      // Ensure episodes are in correct order
-      mediaInfo.episodes?.reverse();
+      episodes.reverse();
 
       return mediaInfo;
     } catch (err) {
@@ -207,17 +211,15 @@ class DramaCool extends MovieParser {
         let name = $(el).attr('class')?.replace('selected', '').trim() ?? '';
 
         if (url) {
-          // Convert Standard server name to AsianLoad
           if (name.includes('Standard')) {
             name = StreamingServers.AsianLoad;
           }
 
-          // Ensure URL uses HTTPS
           const serverUrl = url.startsWith('//') ? `https:${url}` : url;
 
           episodeServers.push({
             name: name,
-            url: serverUrl
+            url: serverUrl,
           });
         }
       });
@@ -238,19 +240,19 @@ class DramaCool extends MovieParser {
         case StreamingServers.AsianLoad:
           return {
             ...(await new AsianLoad(this.proxyConfig, this.adapter).extract(serverUrl)),
-            download: this.downloadLink(episodeId)
+            download: this.downloadLink(episodeId),
           };
         case StreamingServers.MixDrop:
           return {
-            sources: await new MixDrop(this.proxyConfig, this.adapter).extract(serverUrl)
+            sources: await new MixDrop(this.proxyConfig, this.adapter).extract(serverUrl),
           };
         case StreamingServers.StreamTape:
           return {
-            sources: await new StreamTape(this.proxyConfig, this.adapter).extract(serverUrl)
+            sources: await new StreamTape(this.proxyConfig, this.adapter).extract(serverUrl),
           };
         case StreamingServers.StreamSB:
           return {
-            sources: await new StreamSB(this.proxyConfig, this.adapter).extract(serverUrl)
+            sources: await new StreamSB(this.proxyConfig, this.adapter).extract(serverUrl),
           };
         default:
           throw new Error('Server not supported');
@@ -260,14 +262,12 @@ class DramaCool extends MovieParser {
     try {
       const servers = await this.fetchEpisodeServers(episodeId);
       const serverIndex = servers.findIndex(s => s.name.toLowerCase() === server.toLowerCase());
-      
+
       if (serverIndex === -1) {
         throw new Error(`Server ${server} not found`);
       }
 
-      const serverUrl = new URL(
-        servers.find(s => s.name.toLowerCase() === server.toLowerCase())!.url
-      );
+      const serverUrl = new URL(servers.find(s => s.name.toLowerCase() === server.toLowerCase())!.url);
 
       return await this.fetchEpisodeSources(serverUrl.href, server);
     } catch (err) {
@@ -303,8 +303,8 @@ class DramaCool extends MovieParser {
   };
 
   private parseViewPage = (
-    data: string, 
-    page: number, 
+    data: string,
+    page: number,
     isTvShow: boolean = false,
     isMovie: boolean = false
   ): ISearch<IMovieResult> => {
@@ -313,10 +313,9 @@ class DramaCool extends MovieParser {
       currentPage: page,
       hasNextPage: false,
       totalPages: 1,
-      results: []
+      results: [],
     };
 
-    // Parse pagination
     const navSelector = 'ul.pagination';
     const lastPage = $(navSelector).find('li.last a').attr('href');
     if (lastPage) {
@@ -325,12 +324,10 @@ class DramaCool extends MovieParser {
       results.hasNextPage = page < maxPage;
     }
 
-    // Parse results
     $('ul.list-episode-item > li').each((_, el) => {
       const link = $(el).find('a').attr('href');
       const title = $(el).find('h3.title').text().trim();
       const image = $(el).find('img').attr('data-original');
-      const type = $(el).find('span.type').text();
       const time = $(el).find('span.time').text();
 
       if (link && title) {
@@ -338,27 +335,32 @@ class DramaCool extends MovieParser {
         let episodeNumber: number | undefined;
 
         if (isTvShow) {
-          // For TV shows, remove episode info from ID
           id = link.split('-episode-')[0].slice(1);
-          const epMatch = $(el).find('span.ep').text().match(/EP (\d+)/);
+          const epMatch = $(el)
+            .find('span.ep')
+            .text()
+            .match(/EP (\d+)/);
           episodeNumber = epMatch ? parseInt(epMatch[1]) : undefined;
         } else if (isMovie) {
-          // For movies, use the full path as ID
           id = link.slice(1).replace('.html', '');
         } else {
-          // For other cases (popular)
           id = link.slice(1).replace('.html', '');
         }
 
-        results.results.push({
+        const result = {
           id: id,
           title: title,
           url: `${this.baseUrl}${link}`,
           image: image,
           releaseDate: time,
-          type: type,
-          episodeNumber: episodeNumber
-        });
+          type: isMovie ? TvType.MOVIE : TvType.TVSERIES,
+        } as IMovieResult;
+
+        if (episodeNumber !== undefined) {
+          result.episodeNumber = episodeNumber;
+        }
+
+        results.results.push(result);
       }
     });
 

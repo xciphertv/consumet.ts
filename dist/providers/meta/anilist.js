@@ -15,14 +15,186 @@ const crunchyroll_1 = __importDefault(require("../anime/crunchyroll"));
 const bilibili_1 = __importDefault(require("../anime/bilibili"));
 const _9anime_1 = __importDefault(require("../anime/9anime"));
 const utils_2 = require("../../utils/utils");
+class OfflineAnimeDatabase {
+    constructor() {
+        this.database = null;
+        this.databaseUrl = 'https://raw.githubusercontent.com/manami-project/anime-offline-database/master/anime-offline-database.json';
+        this.isLoading = false;
+        this.loadPromise = null;
+    }
+    static getInstance() {
+        if (!OfflineAnimeDatabase.instance) {
+            OfflineAnimeDatabase.instance = new OfflineAnimeDatabase();
+        }
+        return OfflineAnimeDatabase.instance;
+    }
+    async loadDatabase() {
+        if (this.database !== null)
+            return;
+        if (this.loadPromise)
+            return this.loadPromise;
+        this.isLoading = true;
+        this.loadPromise = new Promise(async (resolve, reject) => {
+            try {
+                const response = await axios_1.default.get(this.databaseUrl);
+                this.database = response.data.data;
+                this.isLoading = false;
+                resolve();
+            }
+            catch (error) {
+                this.isLoading = false;
+                this.database = [];
+                console.error('Failed to load offline database:', error);
+                reject(error);
+            }
+        });
+        return this.loadPromise;
+    }
+    mapStatus(status) {
+        switch (status.toLowerCase()) {
+            case 'finished':
+                return models_1.MediaStatus.COMPLETED;
+            case 'currently':
+                return models_1.MediaStatus.ONGOING;
+            case 'upcoming':
+                return models_1.MediaStatus.NOT_YET_AIRED;
+            default:
+                return models_1.MediaStatus.UNKNOWN;
+        }
+    }
+    mapType(type) {
+        switch (type.toLowerCase()) {
+            case 'tv':
+                return models_1.MediaFormat.TV;
+            case 'movie':
+                return models_1.MediaFormat.MOVIE;
+            case 'ova':
+                return models_1.MediaFormat.OVA;
+            case 'ona':
+                return models_1.MediaFormat.ONA;
+            case 'special':
+                return models_1.MediaFormat.SPECIAL;
+            case 'tv_short':
+                return models_1.MediaFormat.TV_SHORT;
+            case 'music':
+                return models_1.MediaFormat.MUSIC;
+            default:
+                return models_1.MediaFormat.TV;
+        }
+    }
+    getMalId(sources) {
+        const malSource = sources.find(source => source.includes('myanimelist.net/anime/'));
+        if (malSource) {
+            const malId = malSource.split('/anime/')[1];
+            const numericId = parseInt(malId);
+            return isNaN(numericId) ? undefined : numericId;
+        }
+        return undefined;
+    }
+    getAnilistId(sources) {
+        const anilistSource = sources.find(source => source.includes('anilist.co/anime/'));
+        if (anilistSource) {
+            const anilistId = anilistSource.split('/anime/')[1];
+            return anilistId || undefined;
+        }
+        return undefined;
+    }
+    async search(query, page = 1, perPage = 15) {
+        await this.loadDatabase();
+        if (!this.database) {
+            throw new Error('Failed to load offline database');
+        }
+        const normalizedQuery = query.toLowerCase();
+        const filteredResults = this.database.filter(entry => entry.title.toLowerCase().includes(normalizedQuery) ||
+            entry.synonyms.some(synonym => synonym.toLowerCase().includes(normalizedQuery)));
+        const startIndex = (page - 1) * perPage;
+        const endIndex = startIndex + perPage;
+        const paginatedResults = filteredResults.slice(startIndex, endIndex);
+        return {
+            currentPage: page,
+            hasNextPage: endIndex < filteredResults.length,
+            results: paginatedResults.map(entry => ({
+                id: this.getAnilistId(entry.sources) || '',
+                malId: this.getMalId(entry.sources),
+                title: {
+                    romaji: entry.title,
+                    english: entry.title,
+                    native: entry.title,
+                    userPreferred: entry.title,
+                },
+                status: this.mapStatus(entry.status),
+                image: entry.picture,
+                imageHash: (0, utils_2.getHashFromImage)(entry.picture),
+                cover: entry.picture,
+                coverHash: (0, utils_2.getHashFromImage)(entry.picture),
+                popularity: 0,
+                description: '',
+                rating: 0,
+                genres: entry.tags,
+                color: '#000000',
+                totalEpisodes: entry.episodes,
+                currentEpisode: entry.episodes,
+                type: this.mapType(entry.type),
+                releaseDate: entry.animeSeason.year.toString(),
+            })),
+        };
+    }
+    async getAnimeInfo(id, dub = false) {
+        await this.loadDatabase();
+        if (!this.database) {
+            throw new Error('Failed to load offline database');
+        }
+        const entry = this.database.find(anime => this.getAnilistId(anime.sources) === id);
+        if (!entry)
+            return null;
+        const malId = this.getMalId(entry.sources);
+        return {
+            id: id,
+            title: {
+                romaji: entry.title,
+                english: entry.title,
+                native: entry.title,
+                userPreferred: entry.title,
+            },
+            malId: malId,
+            synonyms: entry.synonyms,
+            isLicensed: true,
+            isAdult: false,
+            countryOfOrigin: 'JP',
+            image: entry.picture,
+            imageHash: (0, utils_2.getHashFromImage)(entry.picture),
+            cover: entry.picture,
+            coverHash: (0, utils_2.getHashFromImage)(entry.picture),
+            description: '',
+            status: this.mapStatus(entry.status),
+            releaseDate: entry.animeSeason.year.toString(),
+            startDate: {
+                year: entry.animeSeason.year,
+                month: 1,
+                day: 1,
+            },
+            endDate: {
+                year: entry.animeSeason.year,
+                month: 12,
+                day: 31,
+            },
+            totalEpisodes: entry.episodes,
+            currentEpisode: entry.episodes,
+            rating: 0,
+            duration: 0,
+            genres: entry.tags,
+            season: entry.animeSeason.season,
+            studios: [],
+            subOrDub: dub ? models_1.SubOrSub.DUB : models_1.SubOrSub.SUB,
+            type: this.mapType(entry.type),
+            recommendations: [],
+            characters: [],
+            relations: [],
+            episodes: [],
+        };
+    }
+}
 class Anilist extends models_1.AnimeParser {
-    /**
-     * This class maps anilist to kitsu with any other anime provider.
-     * kitsu is used for episode images, titles and description.
-     * @param provider anime provider (optional) default: Gogoanime
-     * @param proxyConfig proxy config (optional)
-     * @param adapter axios adapter (optional)
-     */
     constructor(provider, proxyConfig, adapter, customBaseURL) {
         super(proxyConfig, adapter);
         this.proxyConfig = proxyConfig;
@@ -34,11 +206,6 @@ class Anilist extends models_1.AnimeParser {
         this.kitsuGraphqlUrl = 'https://kitsu.io/api/graphql';
         this.malSyncUrl = 'https://api.malsync.moe';
         this.anifyUrl = utils_2.ANIFY_URL;
-        /**
-         * @param query Search query
-         * @param page Page number (optional)
-         * @param perPage Number of results per page (optional) (default: 15) (max: 50)
-         */
         this.search = async (query, page = 1, perPage = 15) => {
             var _b, _c, _d, _e, _f, _g, _h, _j, _k, _l, _m, _o, _p;
             const options = {
@@ -52,8 +219,10 @@ class Anilist extends models_1.AnimeParser {
                 let { data, status } = await this.client.post(this.anilistGraphqlUrl, options, {
                     validateStatus: () => true,
                 });
-                if (status >= 500 || status == 429)
-                    data = await new anify_1.default().rawSearch(query, page);
+                if (status >= 500 || status === 429) {
+                    console.warn('Anilist API failed, falling back to offline database');
+                    return this.offlineDb.search(query, page, perPage);
+                }
                 const res = {
                     currentPage: (_d = (_c = (_b = data.data.Page) === null || _b === void 0 ? void 0 : _b.pageInfo) === null || _c === void 0 ? void 0 : _c.currentPage) !== null && _d !== void 0 ? _d : (_e = data.meta) === null || _e === void 0 ? void 0 : _e.currentPage,
                     hasNextPage: (_h = (_g = (_f = data.data.Page) === null || _f === void 0 ? void 0 : _f.pageInfo) === null || _g === void 0 ? void 0 : _g.hasNextPage) !== null && _h !== void 0 ? _h : ((_j = data.meta) === null || _j === void 0 ? void 0 : _j.currentPage) != ((_k = data.meta) === null || _k === void 0 ? void 0 : _k.lastPage),
@@ -135,7 +304,8 @@ class Anilist extends models_1.AnimeParser {
                 return res;
             }
             catch (err) {
-                throw new Error(err.message);
+                console.warn('Anilist search failed, falling back to offline database');
+                return this.offlineDb.search(query, page, perPage);
             }
         };
         /**
@@ -300,11 +470,19 @@ class Anilist extends models_1.AnimeParser {
                     throw new Error('Media not found. Perhaps the id is invalid or the anime is not in anilist');
                 if (status == 429)
                     throw new Error('You have been ratelimited by anilist. Please try again later');
-                // if (status >= 500) throw new Error('Anilist seems to be down. Please try again later');
                 if (status != 200 && status < 429)
                     throw Error('Media not found. If the problem persists, please contact the developer');
-                if (status >= 500)
-                    data = await new anify_1.default().fetchAnimeInfoByIdRaw(id);
+                if (status >= 500) {
+                    // Try offline database first before falling back to Anify
+                    try {
+                        const offlineInfo = await this.offlineDb.getAnimeInfo(id, dub);
+                        if (offlineInfo)
+                            return offlineInfo;
+                    }
+                    catch (e) {
+                        data = await new anify_1.default().fetchAnimeInfoByIdRaw(id);
+                    }
+                }
                 animeInfo.malId = (_d = (_c = (_b = data.data) === null || _b === void 0 ? void 0 : _b.Media) === null || _c === void 0 ? void 0 : _c.idMal) !== null && _d !== void 0 ? _d : (_e = data === null || data === void 0 ? void 0 : data.mappings) === null || _e === void 0 ? void 0 : _e.mal;
                 animeInfo.title = data.data.Media
                     ? {
@@ -569,6 +747,17 @@ class Anilist extends models_1.AnimeParser {
                 return animeInfo;
             }
             catch (err) {
+                try {
+                    // Try offline database first
+                    console.warn('Anilist fetch failed, trying offline database...');
+                    const offlineInfo = await this.offlineDb.getAnimeInfo(id, dub);
+                    if (offlineInfo)
+                        return offlineInfo;
+                }
+                catch (offlineErr) {
+                    console.warn('Offline database fetch failed:', offlineErr);
+                }
+                // If offline database also fails, throw the original error
                 throw new Error(err.message);
             }
         };
@@ -1709,6 +1898,7 @@ class Anilist extends models_1.AnimeParser {
             return englishPossibleEpisodes;
         };
         this.provider = provider || new gogoanime_1.default(customBaseURL, proxyConfig);
+        this.offlineDb = OfflineAnimeDatabase.getInstance();
     }
 }
 _a = Anilist;
