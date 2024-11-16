@@ -48,224 +48,6 @@ import Bilibili from '../anime/bilibili';
 import NineAnime from '../anime/9anime';
 import { ANIFY_URL, compareTwoStrings, getHashFromImage } from '../../utils/utils';
 
-interface OfflineAnimeEntry {
-  sources: string[];
-  title: string;
-  type: string;
-  episodes: number;
-  status: string;
-  animeSeason: {
-    season: string;
-    year: number;
-  };
-  picture: string;
-  thumbnail: string;
-  synonyms: string[];
-  relations: string[];
-  tags: string[];
-}
-
-interface OfflineDatabase {
-  data: OfflineAnimeEntry[];
-}
-
-class OfflineAnimeDatabase {
-  private static instance: OfflineAnimeDatabase;
-  private database: OfflineAnimeEntry[] | null = null;
-  private readonly databaseUrl =
-    'https://raw.githubusercontent.com/manami-project/anime-offline-database/master/anime-offline-database.json';
-  private isLoading: boolean = false;
-  private loadPromise: Promise<void> | null = null;
-
-  private constructor() {}
-
-  public static getInstance(): OfflineAnimeDatabase {
-    if (!OfflineAnimeDatabase.instance) {
-      OfflineAnimeDatabase.instance = new OfflineAnimeDatabase();
-    }
-    return OfflineAnimeDatabase.instance;
-  }
-
-  private async loadDatabase(): Promise<void> {
-    if (this.database !== null) return;
-    if (this.loadPromise) return this.loadPromise;
-
-    this.isLoading = true;
-    this.loadPromise = new Promise(async (resolve, reject) => {
-      try {
-        const response = await axios.get<OfflineDatabase>(this.databaseUrl);
-        this.database = response.data.data;
-        this.isLoading = false;
-        resolve();
-      } catch (error) {
-        this.isLoading = false;
-        this.database = [];
-        console.error('Failed to load offline database:', error);
-        reject(error);
-      }
-    });
-
-    return this.loadPromise;
-  }
-
-  private mapStatus(status: string): MediaStatus {
-    switch (status.toLowerCase()) {
-      case 'finished':
-        return MediaStatus.COMPLETED;
-      case 'currently':
-        return MediaStatus.ONGOING;
-      case 'upcoming':
-        return MediaStatus.NOT_YET_AIRED;
-      default:
-        return MediaStatus.UNKNOWN;
-    }
-  }
-
-  private mapType(type: string): MediaFormat {
-    switch (type.toLowerCase()) {
-      case 'tv':
-        return MediaFormat.TV;
-      case 'movie':
-        return MediaFormat.MOVIE;
-      case 'ova':
-        return MediaFormat.OVA;
-      case 'ona':
-        return MediaFormat.ONA;
-      case 'special':
-        return MediaFormat.SPECIAL;
-      case 'tv_short':
-        return MediaFormat.TV_SHORT;
-      case 'music':
-        return MediaFormat.MUSIC;
-      default:
-        return MediaFormat.TV;
-    }
-  }
-
-  private getMalId(sources: string[]): string | number | undefined {
-    const malSource = sources.find(source => source.includes('myanimelist.net/anime/'));
-    if (malSource) {
-      const malId = malSource.split('/anime/')[1];
-      const numericId = parseInt(malId);
-      return isNaN(numericId) ? undefined : numericId;
-    }
-    return undefined;
-  }
-
-  private getAnilistId(sources: string[]): string | undefined {
-    const anilistSource = sources.find(source => source.includes('anilist.co/anime/'));
-    if (anilistSource) {
-      const anilistId = anilistSource.split('/anime/')[1];
-      return anilistId || undefined;
-    }
-    return undefined;
-  }
-
-  public async search(query: string, page: number = 1, perPage: number = 15): Promise<ISearch<IAnimeResult>> {
-    await this.loadDatabase();
-    if (!this.database) {
-      throw new Error('Failed to load offline database');
-    }
-
-    const normalizedQuery = query.toLowerCase();
-    const filteredResults = this.database.filter(
-      entry =>
-        entry.title.toLowerCase().includes(normalizedQuery) ||
-        entry.synonyms.some(synonym => synonym.toLowerCase().includes(normalizedQuery))
-    );
-
-    const startIndex = (page - 1) * perPage;
-    const endIndex = startIndex + perPage;
-    const paginatedResults = filteredResults.slice(startIndex, endIndex);
-
-    return {
-      currentPage: page,
-      hasNextPage: endIndex < filteredResults.length,
-      results: paginatedResults.map(entry => ({
-        id: this.getAnilistId(entry.sources) || '',
-        malId: this.getMalId(entry.sources),
-        title: {
-          romaji: entry.title,
-          english: entry.title,
-          native: entry.title,
-          userPreferred: entry.title,
-        },
-        status: this.mapStatus(entry.status),
-        image: entry.picture,
-        imageHash: getHashFromImage(entry.picture),
-        cover: entry.picture,
-        coverHash: getHashFromImage(entry.picture),
-        popularity: 0,
-        description: '',
-        rating: 0,
-        genres: entry.tags,
-        color: '#000000',
-        totalEpisodes: entry.episodes,
-        currentEpisode: entry.episodes,
-        type: this.mapType(entry.type),
-        releaseDate: entry.animeSeason.year.toString(),
-      })),
-    };
-  }
-
-  public async getAnimeInfo(id: string, dub: boolean = false): Promise<IAnimeInfo | null> {
-    await this.loadDatabase();
-    if (!this.database) {
-      throw new Error('Failed to load offline database');
-    }
-
-    const entry = this.database.find(anime => this.getAnilistId(anime.sources) === id);
-    if (!entry) return null;
-
-    const malId = this.getMalId(entry.sources);
-
-    return {
-      id: id,
-      title: {
-        romaji: entry.title,
-        english: entry.title,
-        native: entry.title,
-        userPreferred: entry.title,
-      },
-      malId: malId,
-      synonyms: entry.synonyms,
-      isLicensed: true,
-      isAdult: false,
-      countryOfOrigin: 'JP',
-      image: entry.picture,
-      imageHash: getHashFromImage(entry.picture),
-      cover: entry.picture,
-      coverHash: getHashFromImage(entry.picture),
-      description: '',
-      status: this.mapStatus(entry.status),
-      releaseDate: entry.animeSeason.year.toString(),
-      startDate: {
-        year: entry.animeSeason.year,
-        month: 1,
-        day: 1,
-      },
-      endDate: {
-        year: entry.animeSeason.year,
-        month: 12,
-        day: 31,
-      },
-      totalEpisodes: entry.episodes,
-      currentEpisode: entry.episodes,
-      rating: 0,
-      duration: 0,
-      genres: entry.tags,
-      season: entry.animeSeason.season,
-      studios: [],
-      subOrDub: dub ? SubOrSub.DUB : SubOrSub.SUB,
-      type: this.mapType(entry.type),
-      recommendations: [],
-      characters: [],
-      relations: [],
-      episodes: [],
-    };
-  }
-}
-
 class Anilist extends AnimeParser {
   override readonly name = 'Anilist';
   protected override baseUrl = 'https://anilist.co';
@@ -276,9 +58,15 @@ class Anilist extends AnimeParser {
   private readonly kitsuGraphqlUrl = 'https://kitsu.io/api/graphql';
   private readonly malSyncUrl = 'https://api.malsync.moe';
   private readonly anifyUrl = ANIFY_URL;
-  private readonly offlineDb: OfflineAnimeDatabase;
   provider: AnimeParser;
 
+  /**
+   * This class maps anilist to kitsu with any other anime provider.
+   * kitsu is used for episode images, titles and description.
+   * @param provider anime provider (optional) default: Gogoanime
+   * @param proxyConfig proxy config (optional)
+   * @param adapter axios adapter (optional)
+   */
   constructor(
     provider?: AnimeParser,
     public proxyConfig?: ProxyConfig,
@@ -287,9 +75,13 @@ class Anilist extends AnimeParser {
   ) {
     super(proxyConfig, adapter);
     this.provider = provider || new Gogoanime(customBaseURL, proxyConfig);
-    this.offlineDb = OfflineAnimeDatabase.getInstance();
   }
 
+  /**
+   * @param query Search query
+   * @param page Page number (optional)
+   * @param perPage Number of results per page (optional) (default: 15) (max: 50)
+   */
   override search = async (
     query: string,
     page: number = 1,
@@ -308,10 +100,7 @@ class Anilist extends AnimeParser {
         validateStatus: () => true,
       });
 
-      if (status >= 500 || status === 429) {
-        console.warn('Anilist API failed, falling back to offline database');
-        return this.offlineDb.search(query, page, perPage);
-      }
+      if (status >= 500 || status == 429) data = await new Anify().rawSearch(query, page);
 
       const res: ISearch<IAnimeResult> = {
         currentPage: data.data!.Page?.pageInfo?.currentPage ?? data.meta?.currentPage,
@@ -394,8 +183,7 @@ class Anilist extends AnimeParser {
 
       return res;
     } catch (err) {
-      console.warn('Anilist search failed, falling back to offline database');
-      return this.offlineDb.search(query, page, perPage);
+      throw new Error((err as Error).message);
     }
   };
 
@@ -582,17 +370,10 @@ class Anilist extends AnimeParser {
       if (status == 404)
         throw new Error('Media not found. Perhaps the id is invalid or the anime is not in anilist');
       if (status == 429) throw new Error('You have been ratelimited by anilist. Please try again later');
+      // if (status >= 500) throw new Error('Anilist seems to be down. Please try again later');
       if (status != 200 && status < 429)
         throw Error('Media not found. If the problem persists, please contact the developer');
-      if (status >= 500) {
-        // Try offline database first before falling back to Anify
-        try {
-          const offlineInfo = await this.offlineDb.getAnimeInfo(id, dub);
-          if (offlineInfo) return offlineInfo;
-        } catch (e) {
-          data = await new Anify().fetchAnimeInfoByIdRaw(id);
-        }
-      }
+      if (status >= 500) data = await new Anify().fetchAnimeInfoByIdRaw(id);
 
       animeInfo.malId = data.data?.Media?.idMal ?? data?.mappings?.mal;
       animeInfo.title = data.data.Media
@@ -800,7 +581,6 @@ class Anilist extends AnimeParser {
         ),
         rating: item.node.meanScore,
       }));
-
       if (
         (this.provider instanceof Zoro || this.provider instanceof Gogoanime) &&
         !dub &&
@@ -926,16 +706,6 @@ class Anilist extends AnimeParser {
 
       return animeInfo;
     } catch (err) {
-      try {
-        // Try offline database first
-        console.warn('Anilist fetch failed, trying offline database...');
-        const offlineInfo = await this.offlineDb.getAnimeInfo(id, dub);
-        if (offlineInfo) return offlineInfo;
-      } catch (offlineErr) {
-        console.warn('Offline database fetch failed:', offlineErr);
-      }
-
-      // If offline database also fails, throw the original error
       throw new Error((err as Error).message);
     }
   };
@@ -1262,24 +1032,24 @@ class Anilist extends AnimeParser {
         results: data.data.Page.media.map((item: any) => ({
           id: item.id.toString(),
           malId: item.idMal,
-          title: item.title
-            ? {
-                romaji: item.title.romaji,
-                english: item.title.english,
-                native: item.title.native,
-                userPreferred: item.title.userPreferred,
-              }
-            : item.title.romaji,
-          image: item.coverImage.extraLarge ?? item.coverImage.large ?? item.coverImage.medium,
-          imageHash: getHashFromImage(
-            item.coverImage.extraLarge ?? item.coverImage.large ?? item.coverImage.medium
-          ),
-          trailer: {
-            id: item.trailer?.id,
-            site: item.trailer?.site,
-            thumbnail: item.trailer?.thumbnail,
-            thumbnailHash: getHashFromImage(item.trailer?.thumbnail),
+          title: {
+            romaji: item.title?.romaji,
+            english: item.title?.english,
+            native: item.title?.native,
+            userPreferred: item.title?.userPreferred,
           },
+          image: item.coverImage?.extraLarge ?? item.coverImage?.large ?? item.coverImage?.medium,
+          imageHash: getHashFromImage(
+            item.coverImage?.extraLarge ?? item.coverImage?.large ?? item.coverImage?.medium
+          ),
+          trailer: item.trailer
+            ? {
+                id: item.trailer.id,
+                site: item.trailer.site,
+                thumbnail: item.trailer.thumbnail,
+                thumbnailHash: getHashFromImage(item.trailer.thumbnail),
+              }
+            : undefined,
           description: item.description,
           status:
             item.status == 'RELEASING'
@@ -1294,9 +1064,15 @@ class Anilist extends AnimeParser {
               ? MediaStatus.HIATUS
               : MediaStatus.UNKNOWN,
           cover:
-            item.bannerImage ?? item.coverImage.extraLarge ?? item.coverImage.large ?? item.coverImage.medium,
+            item.bannerImage ??
+            item.coverImage?.extraLarge ??
+            item.coverImage?.large ??
+            item.coverImage?.medium,
           coverHash: getHashFromImage(
-            item.bannerImage ?? item.coverImage.extraLarge ?? item.coverImage.large ?? item.coverImage.medium
+            item.bannerImage ??
+              item.coverImage?.extraLarge ??
+              item.coverImage?.large ??
+              item.coverImage?.medium
           ),
           rating: item.averageScore,
           releaseDate: item.seasonYear,

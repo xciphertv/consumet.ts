@@ -10,9 +10,20 @@ declare class Anilist extends AnimeParser {
     private readonly kitsuGraphqlUrl;
     private readonly malSyncUrl;
     private readonly anifyUrl;
-    private readonly offlineDb;
     provider: AnimeParser;
+    /**
+     * This class maps anilist to kitsu with any other anime provider.
+     * kitsu is used for episode images, titles and description.
+     * @param provider anime provider (optional) default: Gogoanime
+     * @param proxyConfig proxy config (optional)
+     * @param adapter axios adapter (optional)
+     */
     constructor(provider?: AnimeParser, proxyConfig?: ProxyConfig | undefined, adapter?: AxiosAdapter, customBaseURL?: string);
+    /**
+     * @param query Search query
+     * @param page Page number (optional)
+     * @param perPage Number of results per page (optional) (default: 15) (max: 50)
+     */
     search: (query: string, page?: number, perPage?: number) => Promise<ISearch<IAnimeResult>>;
     /**
      *
