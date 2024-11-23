@@ -1032,24 +1032,24 @@ class Anilist extends AnimeParser {
         results: data.data.Page.media.map((item: any) => ({
           id: item.id.toString(),
           malId: item.idMal,
-          title: {
-            romaji: item.title?.romaji,
-            english: item.title?.english,
-            native: item.title?.native,
-            userPreferred: item.title?.userPreferred,
-          },
-          image: item.coverImage?.extraLarge ?? item.coverImage?.large ?? item.coverImage?.medium,
-          imageHash: getHashFromImage(
-            item.coverImage?.extraLarge ?? item.coverImage?.large ?? item.coverImage?.medium
-          ),
-          trailer: item.trailer
+          title: item.title
             ? {
-                id: item.trailer.id,
-                site: item.trailer.site,
-                thumbnail: item.trailer.thumbnail,
-                thumbnailHash: getHashFromImage(item.trailer.thumbnail),
+                romaji: item.title.romaji,
+                english: item.title.english,
+                native: item.title.native,
+                userPreferred: item.title.userPreferred,
               }
-            : undefined,
+            : item.title.romaji,
+          image: item.coverImage.extraLarge ?? item.coverImage.large ?? item.coverImage.medium,
+          imageHash: getHashFromImage(
+            item.coverImage.extraLarge ?? item.coverImage.large ?? item.coverImage.medium
+          ),
+          trailer: {
+            id: item.trailer?.id,
+            site: item.trailer?.site,
+            thumbnail: item.trailer?.thumbnail,
+            thumbnailHash: getHashFromImage(item.trailer?.thumbnail),
+          },
           description: item.description,
           status:
             item.status == 'RELEASING'
@@ -1064,15 +1064,9 @@ class Anilist extends AnimeParser {
               ? MediaStatus.HIATUS
               : MediaStatus.UNKNOWN,
           cover:
-            item.bannerImage ??
-            item.coverImage?.extraLarge ??
-            item.coverImage?.large ??
-            item.coverImage?.medium,
+            item.bannerImage ?? item.coverImage.extraLarge ?? item.coverImage.large ?? item.coverImage.medium,
           coverHash: getHashFromImage(
-            item.bannerImage ??
-              item.coverImage?.extraLarge ??
-              item.coverImage?.large ??
-              item.coverImage?.medium
+            item.bannerImage ?? item.coverImage.extraLarge ?? item.coverImage.large ?? item.coverImage.medium
           ),
           rating: item.averageScore,
           releaseDate: item.seasonYear,
